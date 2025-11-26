@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>IdentiMX — Generador RFC y CURP</title>
+<style>
+  :root{--bg:#f6f7fb;--card:#ffffff;--accent:#0b63d6;--muted:#666;}
+  body{font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);margin:0;color:#111}
+  .container{max-width:980px;margin:28px auto;padding:20px}
+  header{display:flex;align-items:center;gap:16px;margin-bottom:18px}
+  h1{margin:0;font-size:24px}
+  p.lead{margin:0;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:20px}
+  .card{background:var(--card);padding:18px;border-radius:10px;box-shadow:0 6px 18px rgba(11,99,214,0.06);cursor:pointer;transition:transform .12s}
+  .card:hover{transform:translateY(-6px)}
+  .card h3{margin:0 0 8px 0}
+  .card p{margin:0;color:var(--muted);font-size:14px}
+  .panel{background:var(--card);padding:18px;border-radius:10px;margin-top:20px;box-shadow:0 6px 18px rgba(0,0,0,0.04)}
+  .btn{background:var(--accent);color:#fff;padding:8px 12px;border-radius:8px;border:0;cursor:pointer}
+  .btn.secondary{background:#eee;color:#111}
+  form{display:grid;gap:10px;max-width:560px}
+  label{font-size:13px;color:#333}
+  input,select{padding:8px;border-radius:6px;border:1px solid #d8dbe6;font-size:14px}
+  .row{display:flex;gap:10px}
+  .small{font-size:13px;color:var(--muted)}
+  pre{background:#f3f4f8;padding:10px;border-radius:6px;overflow:auto}
+  .hidden{display:none}
+  footer{margin-top:28px;color:var(--muted);font-size:13px}
+  .note{font-size:12px;color:#555}
+  .results{margin-top:12px;background:#f7fbff;padding:10px;border-radius:6px}
+  .list{max-height:220px;overflow:auto;margin-top:10px;padding:10px;background:#fff;border-radius:6px;border:1px solid #eef2ff}
+  .link-file{font-size:12px;color:var(--muted);margin-top:8px;display:block}
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>IdentiMX</h1>
+        <p class="lead">Generador y validador de RFC y CURP </p>
+      </div>
+    </header>
+
+    <!-- Cards -->
+    <div class="grid" role="menu" aria-label="Menú principal">
+      <div class="card" id="card-rfc" tabindex="0" role="button" aria-pressed="false">
+        <h3>Generar RFC</h3>
+        <p>Calcula la clave RFC y muestra la homoclave aleatoria.</p>
+      </div>
+
+      <div class="card" id="card-curp" tabindex="0" role="button" aria-pressed="false">
+        <h3>Generar CURP</h3>
+        <p>Calcula la CURP (versión funcional) incluyendo consonantes internas.</p>
+      </div>
+
+      <div class="card" id="card-validate" tabindex="0" role="button" aria-pressed="false">
+        <h3>Validar / Base de datos</h3>
+        <p>Simula una base de datos en el navegador: guardar y validar.</p>
+      </div>
+    </div>
+
+    <!-- Placeholder for panels -->
+    <div id="panel-area"></div>
+
+    <footer>
+      <div class="note">Código C# original (referencia local): <span class="link-file" id="cs-path">/mnt/data/Program.cs</span></div>
+    </footer>
+  </div>
+
+<script>
+/* ========= UTILIDADES (misma lógica que en C# adaptada a JS) ========= */
+
+// Limpia cadena: quita acentos y deja A-Z y Ñ
+function limpiarCadena(input) {
+  if (!input) return "";
+  // Normalizar y quitar diacríticos
+  const normalized = input.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Convertir a mayúsculas y mantener letras A-Z y Ñ y espacios
+  return normalized.toUpperCase().replace(/[^A-ZÑ\s]/g, '').trim();
+}
+
+// Primera vocal interna (desde índice 1)
+function obtenerVocalInterna(palabra) {
+  if (!palabra || palabra.length < 2) return 'X';
+  const vocales = 'AEIOU';
+  for (let i = 1; i < palabra.length; i++)
+    if (vocales.includes(palabra[i])) return palabra[i];
+  return 'X';
+}
+
+// Primera consonante interna (desde índice 1)
+function obtenerConsonanteInterna(palabra) {
+  if (!palabra || palabra.length < 2) return 'X';
+  const vocales = 'AEIOU';
+  for (let i = 1; i < palabra.length; i++) {
+    const c = palabra[i];
+    if (!vocales.includes(c) && /[A-ZÑ]/.test(c)) return c;
+  }
+  return 'X';
+}
+
+// Generar cadena alfanumérica aleatoria
+function randomAlnum(len) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let s = '';
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
+
+// Formato fecha y validación sencilla (yyyy-mm-dd)
+function validarFechaISO(fecha) {
+  if (!fecha) return false;
+  // simple pattern check
+  return /^\d{4}-\d{2}-\d{2}$/.test(fecha);
+}
+
+/* ========= LÓGICA RFC / CURP (equivalente a C#) ========= */
+
+function generarRFC({nombre, apellidoP, apellidoM, fechaNacimiento}) {
+  const ap = limpiarCadena(apellidoP);
+  const am = limpiarCadena(apellidoM);
+  const nm = limpiarCadena(nombre);
+
+  const inicialP = ap.length>0 ? ap[0] : 'X';
+  const vocalInterna = obtenerVocalInterna(ap) || 'X';
+  const inicialM = am.length>0 ? am[0] : 'X';
+  const inicialN = nm.length>0 ? nm[0] : 'X';
+
+  const d = new Date(fechaNacimiento);
+  const yy = String(d.getFullYear()).slice(-2).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+
+  const base = inicialP + vocalInterna + inicialM + inicialN + yy + mm + dd;
+  const hom = randomAlnum(3);
+  return (base + hom).toUpperCase();
+}
+
+function generarCURP({nombre, apellidoP, apellidoM, fechaNacimiento, sexo, estado}) {
+  const ap = limpiarCadena(apellidoP);
+  const am = limpiarCadena(apellidoM);
+  const nm = limpiarCadena(nombre);
+
+  const inicialP = ap.length>0 ? ap[0] : 'X';
+  const vocalInterna = obtenerVocalInterna(ap) || 'X';
+  const inicialM = am.length>0 ? am[0] : 'X';
+  const inicialN = nm.length>0 ? nm[0] : 'X';
+
+  const d = new Date(fechaNacimiento);
+  const fecha = String(d.getFullYear()).slice(-2).padStart(2,'0') +
+                String(d.getMonth()+1).padStart(2,'0') +
+                String(d.getDate()).padStart(2,'0');
+
+  const consP = obtenerConsonanteInterna(ap) || 'X';
+  const consM = obtenerConsonanteInterna(am) || 'X';
+  const consN = obtenerConsonanteInterna(nm) || 'X';
+
+  const sex = (sexo && (sexo.toUpperCase()==='H' || sexo.toUpperCase()==='M')) ? sexo.toUpperCase() : 'X';
+  const est = estado ? estado.toUpperCase() : 'NE';
+
+  const base = inicialP + vocalInterna + inicialM + inicialN + fecha + sex + est + consP + consM + consN;
+  const final = randomAlnum(1);
+  return (base + final).toUpperCase();
+}
+
+/* ========= LOCAL STORAGE (DB simulada) ========= */
+
+const DB_KEY = 'identimx_db_v1';
+
+function dbLoad() {
+  try {
+    const raw = localStorage.getItem(DB_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+function dbSave(list) {
+  localStorage.setItem(DB_KEY, JSON.stringify(list));
+}
+function dbAdd(record) {
+  const list = dbLoad();
+  list.push(record);
+  dbSave(list);
+}
+function dbFindByKey(key) {
+  const k = (key||'').toUpperCase().trim();
+  const list = dbLoad();
+  return list.find(r => r.RFC === k || r.CURP === k);
+}
+
+/* ========= UI: manejo de paneles y formularios ========= */
+
+const panelArea = document.getElementById('panel-area');
+const cardRFC = document.getElementById('card-rfc');
+const cardCURP = document.getElementById('card-curp');
+const cardValidate = document.getElementById('card-validate');
+
+cardRFC.addEventListener('click', ()=> showInfo('rfc'));
+cardCURP.addEventListener('click', ()=> showInfo('curp'));
+cardValidate.addEventListener('click', ()=> showInfo('validate'));
+
+// Mostrar explicación intermedia y botón continuar
+function showInfo(mode) {
+  panelArea.innerHTML = '';
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+
+  if (mode === 'rfc') {
+    panel.innerHTML = `
+      <h2>Generar RFC</h2>
+      <p class="small">¿Qué es el RFC y para qué se usa?</p>
+      <p>El Registro Federal de Contribuyentes (RFC) es una clave alfanumérica que identifica a personas físicas y morales ante la autoridad fiscal. Se usa en trámites fiscales, para emitir y recibir comprobantes fiscales (CFDI), declarar impuestos y realizar trámites ante el SAT.</p>
+      <p><strong>Base jurídica (resumen):</strong> El RFC se gestiona y exige conforme al Código Fiscal de la Federación y a reglas del SAT que regulan la inscripción y obligaciones de los contribuyentes.</p>
+      <div style="margin-top:12px"><button class="btn" id="rfc-continue">Continuar al formulario</button></div>
+    `;
+    panelArea.appendChild(panel);
+    document.getElementById('rfc-continue').addEventListener('click', ()=> renderRFCForm());
+  }
+  else if (mode === 'curp') {
+    panel.innerHTML = `
+      <h2>Generar CURP</h2>
+      <p class="small">¿Qué es la CURP y para qué sirve?</p>
+      <p>La Clave Única de Registro de Población (CURP) identifica de forma única a cada persona en México. Se utiliza en trámites de identidad, salud, educación y como apoyo para la gestión administrativa y estadística.</p>
+      <p><strong>Base jurídica (resumen):</strong> La CURP y su procedimiento están regulados por normativas del Registro Nacional de Población (RENAPO) y disposiciones contenidas en la Ley General de Población y en acuerdos oficiales.</p>
+      <div style="margin-top:12px"><button class="btn" id="curp-continue">Continuar al formulario</button></div>
+    `;
+    panelArea.appendChild(panel);
+    document.getElementById('curp-continue').addEventListener('click', ()=> renderCURPForm());
+  }
+  else if (mode === 'validate') {
+    panel.innerHTML = `
+      <h2>Validar registro</h2>
+      <p class="small">Buscar RFC o CURP en la base de datos local del navegador</p>
+      <p>Usa esta herramienta para comprobar si un RFC o CURP ya fue guardado en esta sesión (localStorage).</p>
+      <div style="margin-top:12px"><button class="btn" id="validate-continue">Ir a validar</button></div>
+    `;
+    panelArea.appendChild(panel);
+    document.getElementById('validate-continue').addEventListener('click', ()=> renderValidate());
+  }
+}
+
+/* ========= RENDER FORMULARIOS ========= */
+
+function renderRFCForm() {
+  panelArea.innerHTML = `
+    <div class="panel">
+      <h2>Formulario RFC</h2>
+      <form id="form-rfc">
+        <label>Nombre</label><input id="r-nombre" placeholder="Nombre(s)" />
+        <label>Apellido paterno</label><input id="r-ap" placeholder="Apellido paterno" />
+        <label>Apellido materno</label><input id="r-am" placeholder="Apellido materno" />
+        <label>Fecha de nacimiento</label><input id="r-fecha" type="date" />
+        <div class="row"><button type="button" class="btn" id="btn-gen-rfc">Generar RFC</button> <button type="button" class="btn secondary" id="btn-back-rfc">Volver</button></div>
+      </form>
+      <div class="results" id="rfc-result" style="display:none;"></div>
+    </div>
+  `;
+  document.getElementById('btn-gen-rfc').addEventListener('click', ()=> {
+    const nombre = document.getElementById('r-nombre').value;
+    const ap = document.getElementById('r-ap').value;
+    const am = document.getElementById('r-am').value;
+    const fecha = document.getElementById('r-fecha').value;
+
+    if (!nombre || !ap || !am || !fecha) { alert('Completa todos los campos.'); return; }
+    if (!validarFechaISO(fecha)) { alert('Selecciona una fecha válida.'); return; }
+
+    const r = generarRFC({nombre, apellidoP:ap, apellidoM:am, fechaNacimiento:fecha});
+    const resultDiv = document.getElementById('rfc-result');
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = `<strong>RFC generado:</strong> <code>${r}</code>`;
+  });
+  document.getElementById('btn-back-rfc').addEventListener('click', ()=> panelArea.innerHTML='');
+}
+
+function renderCURPForm() {
+  panelArea.innerHTML = `
+    <div class="panel">
+      <h2>Formulario CURP</h2>
+      <form id="form-curp">
+        <label>Nombre</label><input id="c-nombre" placeholder="Nombre(s)" />
+        <label>Apellido paterno</label><input id="c-ap" placeholder="Apellido paterno" />
+        <label>Apellido materno</label><input id="c-am" placeholder="Apellido materno" />
+        <label>Fecha de nacimiento</label><input id="c-fecha" type="date" />
+        <label>Sexo (H/M)</label><input id="c-sexo" placeholder="H o M" maxlength="1" />
+        <label>Estado (código ej. QRO, CMX, JAL) o NE si extranjero</label><input id="c-estado" placeholder="QRO" />
+        <div class="row"><button type="button" class="btn" id="btn-gen-curp">Generar CURP</button> <button type="button" class="btn secondary" id="btn-back-curp">Volver</button></div>
+      </form>
+      <div class="results" id="curp-result" style="display:none;"></div>
+    </div>
+  `;
+  document.getElementById('btn-gen-curp').addEventListener('click', ()=> {
+    const nombre = document.getElementById('c-nombre').value;
+    const ap = document.getElementById('c-ap').value;
+    const am = document.getElementById('c-am').value;
+    const fecha = document.getElementById('c-fecha').value;
+    const sexo = document.getElementById('c-sexo').value;
+    const estado = document.getElementById('c-estado').value;
+
+    if (!nombre || !ap || !am || !fecha || !sexo || !estado) { alert('Completa todos los campos.'); return; }
+    if (!validarFechaISO(fecha)) { alert('Selecciona una fecha válida.'); return; }
+    if (!/^[HMhm]$/.test(sexo)) { alert('Sexo debe ser H o M.'); return; }
+
+    const curp = generarCURP({nombre, apellidoP:ap, apellidoM:am, fechaNacimiento:fecha, sexo, estado});
+    const resultDiv = document.getElementById('curp-result');
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = `<strong>CURP generado:</strong> <code>${curp}</code>`;
+  });
+  document.getElementById('btn-back-curp').addEventListener('click', ()=> panelArea.innerHTML='');
+}
+
+function renderValidate() {
+  panelArea.innerHTML = `
+    <div class="panel">
+      <h2>Validar / Guardar registros</h2>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div style="min-width:260px">
+          <label>RFC o CURP a validar</label>
+          <input id="v-key" placeholder="Escribe RFC o CURP" />
+          <div style="margin-top:8px"><button class="btn" id="btn-validate">Validar</button></div>
+          <div id="validate-result" class="results" style="display:none"></div>
+        </div>
+
+        <div style="min-width:300px">
+          <label>Guardar nuevo registro (genera RFC+CURP)</label>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Rellena los datos y guarda para simular la base de datos.</div>
+          <input id="s-nombre" placeholder="Nombre" />
+          <input id="s-ap" placeholder="Apellido paterno" />
+          <input id="s-am" placeholder="Apellido materno" />
+          <input id="s-fecha" type="date" />
+          <input id="s-sexo" placeholder="H o M" maxlength="1" />
+          <input id="s-estado" placeholder="QRO" />
+          <div style="margin-top:8px" class="row"><button class="btn" id="btn-save">Guardar</button><button class="btn secondary" id="btn-list">Listar registros</button></div>
+          <div id="save-result" class="results" style="display:none"></div>
+        </div>
+      </div>
+
+      <div id="db-list" class="list hidden"></div>
+    </div>
+  `;
+
+  document.getElementById('btn-validate').addEventListener('click', ()=> {
+    const key = document.getElementById('v-key').value.trim();
+    if (!key) { alert('Escribe una clave a validar'); return; }
+    const found = dbFindByKey(key);
+    const out = document.getElementById('validate-result');
+    out.style.display = 'block';
+    if (found) {
+      out.innerHTML = `<strong>Encontrado:</strong><div>${found.Nombre} ${found.ApellidoP} ${found.ApellidoM}<br>RFC: <code>${found.RFC}</code> | CURP: <code>${found.CURP}</code></div>`;
+    } else {
+      out.innerHTML = `<em>No encontrado en la base local.</em>`;
+    }
+  });
+
+  document.getElementById('btn-save').addEventListener('click', ()=> {
+    const nombre = document.getElementById('s-nombre').value;
+    const ap = document.getElementById('s-ap').value;
+    const am = document.getElementById('s-am').value;
+    const fecha = document.getElementById('s-fecha').value;
+    const sexo = document.getElementById('s-sexo').value;
+    const estado = document.getElementById('s-estado').value;
+
+    if (!nombre || !ap || !am || !fecha || !sexo || !estado) { alert('Completa todos los campos.'); return; }
+    if (!validarFechaISO(fecha)) { alert('Selecciona una fecha válida.'); return; }
+    if (!/^[HMhm]$/.test(sexo)) { alert('Sexo debe ser H o M.'); return; }
+
+    const rfc = generarRFC({nombre, apellidoP:ap, apellidoM:am, fechaNacimiento:fecha});
+    const curp = generarCURP({nombre, apellidoP:ap, apellidoM:am, fechaNacimiento:fecha, sexo, estado});
+    const record = { Nombre:nombre, ApellidoP:ap, ApellidoM:am, FechaNacimiento:fecha, Sexo:sexo.toUpperCase(), Estado:estado.toUpperCase(), RFC:rfc, CURP:curp };
+    dbAdd(record);
+
+    const out = document.getElementById('save-result');
+    out.style.display = 'block';
+    out.innerHTML = `<div>Guardado. RFC: <code>${rfc}</code> CURP: <code>${curp}</code></div>`;
+  });
+
+  document.getElementById('btn-list').addEventListener('click', ()=> {
+    const list = dbLoad();
+    const container = document.getElementById('db-list');
+    if (!list.length) {
+      container.classList.remove('hidden');
+      container.innerHTML = '<div>No hay registros guardados.</div>';
+      return;
+    }
+    container.classList.remove('hidden');
+    container.innerHTML = list.map((r,i)=> `<div><strong>${i+1})</strong> ${r.Nombre} ${r.ApellidoP} ${r.ApellidoM} — RFC: <code>${r.RFC}</code> — CURP: <code>${r.CURP}</code></div>`).join('');
+  });
+}
+
+/* show nothing at start */
+panelArea.innerHTML = '<div class="panel"><p class="small">Selecciona una opción para comenzar. <br> Puedes usar la ruta local al código C#: /mnt/data/Program.cs</p></div>';
+</script>
+</body>
+</html>
+
